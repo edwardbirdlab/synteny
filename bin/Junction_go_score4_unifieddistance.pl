@@ -2,175 +2,129 @@
 use strict;
 use warnings;
 
-#For each species in your Go folder work out species name, then store in a hash with species name -> path to file
-my @gos=`ls Go/*`;
+# Build Go file mapping
+my @gos = `ls Go/*`;
 my %go_key;
-foreach my $sp (@gos){
+foreach my $sp (@gos) {
     chomp $sp;
-    my @split=split(/\./, $sp);
-    my @sp_folder=split("\/", $split[0]);
-    $go_key{$sp_folder[1]}=$sp;
+    my @split = split(/\./, $sp);
+    my @sp_folder = split("/", $split[0]);
+    $go_key{$sp_folder[1]} = $sp;
 }
 
-# Ensure the correct number of arguments are provided
+# Check arguments
 if (@ARGV != 2) {
-    die "Usage: $0 <distance_in_genes> <input_file>\n";
+    die "Usage: $0 <distance_in_genes> <species_name>\n";
 }
-
 my $distance = $ARGV[0];
 my $species = $ARGV[1];
 
-# Store the total scores and counts for each key
-my %scores;
+# Data structures
+my %scores;         # For minimum scores
+my %all_scores;     # For all scores (to average later)
 
-# Read all input files ending with '_gene_scores.txt'
+# Read all gene score files
 my @files = glob("*.gene_scores.txt");
-
 foreach my $file (@files) {
-    open my $fh, '<', $file or die "Could not open file '$file' $!";
+    open my $fh, '<', $file or die "Could not open file '$file': $!";
     print "Combining $file\n";
     while (<$fh>) {
         chomp;
         my ($col1, $col2, $score) = split /\t/;
-
-        # Create a unique key for each row based on the first two columns
         my $key = "$col1\t$col2";
+        next if $score eq "NA";
 
-        # Add new score if less than prior:
-        if ($scores{$key}){
-            if ($scores{$key} eq "NA"){
-                $scores{$key} = $score;
-            }
-            else{
-                if ($scores{$key} >= $score){
-                    $scores{$key} = $score;
-                }
-            }
-            
-        }
-        else{
+        # Track minimum
+        if (exists $scores{$key}) {
+            $scores{$key} = $score if $scores{$key} eq "NA" || $scores{$key} >= $score;
+        } else {
             $scores{$key} = $score;
         }
-        
-        
-    }
 
+        # Track all scores for average
+        push @{ $all_scores{$key} }, $score;
+    }
     close $fh;
 }
 
-# Write the lowest scores to "Summary.tsv"
-open my $out_fh, '>', "Summary.tsv" or die "Could not open file 'Summary.tsv' $!";
+# Write Summary.tsv
+open my $out_fh, '>', "Summary.tsv" or die "Could not open file 'Summary.tsv': $!";
+foreach my $key (keys %scores) {
+    print $out_fh "$key\t$scores{$key}\n";
+}
+close $out_fh;
 
-#Save output of genes tested:
-my $back="$species\.$distance\.bg.txt";
+# Prepare background and closest output files
+my $back = "$species.$distance.bg.txt";
 open my $backsave, '>', $back or die "Could not open file '$back': $!";
 
-my $closest_output_file = "$species.${distance}\.closest.txt";
+my $closest_output_file = "$species.${distance}.closest.txt";
 open my $closest_fh, '>', $closest_output_file or die "Could not open file '$closest_output_file': $!";
 
-# Count of distance scores from break, e.g. <1 scores or <3 scores
-my $distance_count=0;
+# Write closest scores
+my $distance_count = 0;
 my @closest_cutoff;
 foreach my $key (keys %scores) {
-    # Write to output file
-    print $out_fh "$key\t$scores{$key}\n";
-    if ($scores{$key} eq "NA"){
-        #Do nothing.
+    next if $scores{$key} eq "NA";
+    if ($scores{$key} <= $distance) {
+        $distance_count++;
+        push @closest_cutoff, $key;
+        my @splh = split("\t", $key);
+        my $gene = $splh[1];
+        $gene =~ s/^.*://;       # Remove scaffold: prefix if present
+        $gene =~ s/^rna-//;      # Remove rna- prefix
+        $gene =~ s/-/_/g;        # Replace hyphens with underscores
+        print $closest_fh "$gene\n";
     }
-    else{
-        if ($scores{$key} <= $distance){
-            $distance_count++;
-            push (@closest_cutoff, $key);
-            my @splh=split("\t", $key);
-            if($splh[1] =~ m/\:/){
-                my @sp1=split(/\:/, $splh[1]);
-                $splh[1]=$sp1[1];
-            }
-            # Rename weird NCBI id rna- prefix
-            if($splh[1] =~ m/rna-/){
-                        my @sp1=split(/\-/, $splh[1]);
-                        $splh[1]=$sp1[1];
-                    }
-            if($splh[1] =~ m/-/){
-                $splh[1] =~ s/\-/\_/g;
-            }
-            print $closest_fh "$splh[1]\n";
-        }
-        my @splh=split("\t", $key);
-        if($splh[1] =~ m/\:/){
-            my @sp1=split(/\:/, $splh[1]);
-            $splh[1]=$sp1[1];
-        }
-        # Rename weird NCBI id rna- prefix
-        if($splh[1] =~ m/rna-/){
-                    my @sp1=split(/\-/, $splh[1]);
-                    $splh[1]=$sp1[1];
-                }
-        if($splh[1] =~ m/-/){
-            $splh[1] =~ s/\-/\_/g;
-        }
-        print $backsave "$splh[1]\n";
-    }
+    # Save to background
+    my @splh = split("\t", $key);
+    my $gene = $splh[1];
+    $gene =~ s/^.*://;
+    $gene =~ s/^rna-//;
+    $gene =~ s/-/_/g;
+    print $backsave "$gene\n";
 }
-
-close $out_fh;
+close $closest_fh;
 close $backsave;
 
-print "Lowest scores written to 'Summary.tsv'. \n $distance_count genes were below the threshold of $distance\n\n";
+print "Lowest scores written to 'Summary.tsv'.\n$distance_count genes were below the threshold of $distance\n";
 
-# Find out species we are using:
-chomp $species;
+# Build farthest list based on average score
+my @avg_data;
+foreach my $key (keys %all_scores) {
+    my @values = @{ $all_scores{$key} };
+    next unless @values;
+    my $sum = 0;
+    $sum += $_ for @values;
+    my $avg = $sum / @values;
 
+    my @fields = split(/\t/, $key);
+    my $gene = $fields[1];
+    $gene =~ s/^.*://;
+    $gene =~ s/^rna-//;
+    $gene =~ s/-/_/g;
 
-#Read in the new merged table;
-my $sumtab="Summary.tsv";
-open my $fh2, '<', $sumtab or die "Could not open file '$sumtab' $!";
-
-my @data;
-while (my $line = <$fh2>) {
-    chomp $line;
-    my @fields = split /\t/, $line;
-    # Skip if the value is 'NA'
-    next if $fields[2] eq 'NA';
-    
-    if($fields[1] =~ m/\:/){
-                my @sp1=split(/\:/, $fields[1]);
-                $fields[1]=$sp1[1];
-    }
-    # Rename weird NCBI id rna- prefix
-    if($fields[1] =~ m/rna-/){
-                my @sp1=split(/\-/, $fields[1]);
-                $fields[1]=$sp1[1];
-            }
-    if($fields[1] =~ m/-/){
-        $fields[1]=~ s/\-/\_/g;
-    }
-    push @data, [$fields[1], $fields[2]];  # Store gene and value
-    
+    push @avg_data, [$gene, $avg];
 }
-close $fh2;
 
+# Sort by descending average score and get top N
+@avg_data = sort { $b->[1] <=> $a->[1] } @avg_data;
+my @last_values = @avg_data[0 .. ($distance_count - 1)];
 
-# Sort the data by the third column (numeric comparison)
-@data = sort { $a->[1] <=> $b->[1] } @data;
-
-my @last_values = @data[-$distance_count..-1];
-my $farthest_output_file = "$species.${distance}\.farthest.txt";
+# Write farthest list
+my $farthest_output_file = "$species.${distance}.farthest.txt";
 open my $farthest_fh, '>', $farthest_output_file or die "Could not open file '$farthest_output_file': $!";
 foreach my $entry (@last_values) {
-        my ($gene, $value) = @$entry;
-        #print "$gene and $value\n";
-        print $farthest_fh "$gene\n";
+    my ($gene, $value) = @$entry;
+    print $farthest_fh "$gene\n";
 }
-
+close $farthest_fh;
 
 print "Results written to $farthest_output_file and $closest_output_file\n";
 
-#Run GO enrichment analysis on lists
-
-print "ChopGO_VTS2_v12.pl -i $farthest_output_file --GO_file $go_key{$species} -bg $species\.$distance\.bg.txt \n";
-print "ChopGO_VTS2_v12.pl -i $closest_output_file --GO_file $go_key{$species} -bg $species\.$distance\.bg.txt \n";
-`ChopGO_VTS2_v12.pl -i $farthest_output_file --GO_file $go_key{$species} -bg $species\.$distance\.bg.txt`; 
-`ChopGO_VTS2_v12.pl -i $closest_output_file --GO_file $go_key{$species} -bg $species\.$distance\.bg.txt`;
-
+# Run GO enrichment analysis
+print "ChopGO_VTS2_v12.pl -i $farthest_output_file --GO_file $go_key{$species} -bg $back\n";
+print "ChopGO_VTS2_v12.pl -i $closest_output_file --GO_file $go_key{$species} -bg $back\n";
+`ChopGO_VTS2_v12.pl -i $farthest_output_file --GO_file $go_key{$species} -bg $back`; 
+`ChopGO_VTS2_v12.pl -i $closest_output_file --GO_file $go_key{$species} -bg $back`;
 
