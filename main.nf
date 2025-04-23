@@ -244,7 +244,8 @@ workflow {
             }
         }
     }
-
+    
+    if (params.go) { 
     // Add go data folder:
     go_folder = Channel.fromPath(params.go)
     // Split the params.cutoff string into a list of separate entries
@@ -334,7 +335,7 @@ workflow {
     SUMMARISE_PLOTS_INDEL_SMALL_DIST (GO_SUMMARISE_INDEL_SMALL_DIST.out.go_summary_table)
     GO_SUMMARISE_INDEL_TINY_DIST ( GO_JUNCTIONS_INDEL_TINY_DIST.out.go_table.groupTuple() )
     SUMMARISE_PLOTS_INDEL_TINY_DIST (GO_SUMMARISE_INDEL_TINY_DIST.out.go_summary_table)
-
+    }
 }
 
 workflow.onComplete {
