@@ -16,15 +16,37 @@ process SCORE3 {
 
     output:
     path("*junction_details.tsv"), emit: junction_types
-    path("*_junction_summary.tsv"), emit: junction_summary
-    path "versions.yml", emit: versions
+    path("*junction_summary.tsv"), emit: junction_summary
+    path("versions.yml"), emit: versions
+    tuple env(species_name1), path("*inver.gene_scores.txt"), optional: true, emit: inver_distancescores
+    tuple env(species_name1), path("*inter.gene_scores.txt"), optional: true, emit: inter_distancescores
+    tuple env(species_name1), path("*indel_large.gene_scores.txt"), optional: true, emit: large_indel_distancescores
+    tuple env(species_name1), path("*indel_tiny.gene_scores.txt"), optional: true, emit: tiny_indel_distancescores
+    tuple env(species_name1), path("*indel_small.gene_scores.txt"), optional: true, emit: small_indel_distancescores
 
     script:
     """
-    
+    # A script to calculate numbers of different types of break, and the distance from each gene to such breaks.
+
+
     #Refined junction scores:
     grep -Ev 'L\$' ${anchors} > ${anchors}_lifted_removed
-    perl ${projectDir}/bin/Junction_focal_classifier.pl ${anchors}_lifted_removed
+    perl ${projectDir}/bin/sort_anchors.pl ${anchors}_lifted_removed
+    perl ${projectDir}/bin/Junction_focal_classifier.pl ${anchors}_lifted_removed_anchors_sorted.tsv
+
+    #List all genes (in all types of break), on boundary of break:
+    perl ${projectDir}/bin/strip_genes_near_breaks.pl *_junction_details.tsv
+
+    #Calculate gene scores for inversion and translocation junction distance
+    perl ${projectDir}/bin/Calculate_distance_to_inver.score3.pl
+    perl ${projectDir}/bin/Calculate_distance_to_trans.score3.pl
+    perl ${projectDir}/bin/Calculate_distance_to_indel_large.score3.pl
+    perl ${projectDir}/bin/Calculate_distance_to_indel_small.score3.pl
+    perl ${projectDir}/bin/Calculate_distance_to_indel_tiny.score3.pl
+
+    #Strip off species names tested in module:
+    break_file=\$(ls *_lifted_removed 2>/dev/null)
+    species_name1=\$(echo "\$break_file" | cut -d '.' -f1)
 
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":
